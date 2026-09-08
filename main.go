@@ -8,28 +8,45 @@ import (
 	"net/rpc"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Node struct {
-	ID    int
-	peers []string
+	//A server
+	ID          int
+	peers       []string
+	role        int //0 = Follower, 1 = Candidate, 2 = Leader
+	currentTerm int
+	Votedfor    int //-1 = Voted for no one
+	mu          sync.Mutex
+}
+
+func (n *Node) increaseTerm(node Node) {
+	node.mu.Lock()
+	node.currentTerm += 1
+	node.Votedfor = -1
+	node.mu.Unlock()
 }
 
 type AppendEntriesReply struct {
+	//Followers response to the leaders command
 	Term    int
 	Success bool
 }
 
 type AppendEntriesArgs struct {
+	//Command the leader sends out and the follower needs to respond to
 	Term int
 }
 
 func (n *Node) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) error {
+	//The function to tell followers what to do, and get the response.
 	log.Printf("node %d recieved AppendEntries from term %d", n.ID, args.Term)
 	return nil
 }
 
+// Accepts a connection.
 func accept(listener net.Listener) {
 	for {
 		con, err := listener.Accept()
@@ -41,6 +58,7 @@ func accept(listener net.Listener) {
 	}
 }
 
+// Tells other nodes what to do.
 func caller(callAddy string, args AppendEntriesArgs, carry chan string) {
 	client, err := rpc.Dial("tcp", callAddy)
 	if err != nil {
