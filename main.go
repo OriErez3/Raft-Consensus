@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"net"
 	"net/rpc"
 	"strconv"
@@ -12,21 +13,45 @@ import (
 	"time"
 )
 
+type Role int
+
+const (
+	Follower Role = iota
+	Candidate
+	Leader
+)
+
+var minTimeOut time.Duration = 150 * time.Millisecond
+var maxTimeOut time.Duration = 300 * time.Millisecond
+
+func (r Role) String() string {
+	switch r {
+	case Follower:
+		return "Follower"
+	case Candidate:
+		return "Candidate"
+	case Leader:
+		return "Leader"
+	}
+	return fmt.Sprintf("Role(%d)", int(r))
+}
+
 type Node struct {
 	//A server
 	ID          int
 	peers       []string
-	role        int //0 = Follower, 1 = Candidate, 2 = Leader
+	role        Role
 	currentTerm int
-	Votedfor    int //-1 = Voted for no one
+	votedFor    int //-1 = Voted for no one
 	mu          sync.Mutex
+	lastHeard   time.Time
+	timeOut     time.Duration
 }
 
-func (n *Node) increaseTerm(node Node) {
-	node.mu.Lock()
-	node.currentTerm += 1
-	node.Votedfor = -1
-	node.mu.Unlock()
+func (n *Node) increaseTermLocked() {
+	//Use function when the node is locked
+	n.currentTerm += 1
+	n.votedFor = -1
 }
 
 type AppendEntriesReply struct {
@@ -44,6 +69,30 @@ func (n *Node) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) 
 	//The function to tell followers what to do, and get the response.
 	log.Printf("node %d recieved AppendEntries from term %d", n.ID, args.Term)
 	return nil
+}
+
+func (n *Node) ElectionTimer() {
+	for {
+		time.Sleep(time.Millisecond * 10)
+		n.mu.Lock()
+		switch role := n.role; {
+		case role == Leader:
+			n.mu.Unlock()
+			continue
+		default:
+			if time.Since(n.lastHeard) > n.timeOut {
+				n.increaseTermLocked()
+				n.votedFor = n.ID
+				n.role = Candidate
+				n.lastHeard = time.Now()
+				n.timeOut = minTimeOut + rand.N(maxTimeOut-minTimeOut)
+				fmt.Println(n.votedFor, n.role, n.currentTerm, n.timeOut)
+			}
+
+			n.mu.Unlock()
+		}
+
+	}
 }
 
 // Accepts a connection.
@@ -87,23 +136,26 @@ func main() {
 		return
 	}
 	list_of_peers := strings.Split(*peers, ",")
-	node := Node{ID: *id, peers: list_of_peers}
-	carry := make(chan string)
+	randomDuration := minTimeOut + rand.N(maxTimeOut-minTimeOut)
+	node := Node{ID: *id, peers: list_of_peers, lastHeard: time.Now(), timeOut: randomDuration}
+	go node.ElectionTimer()
+	//carry := make(chan string)
 	err = rpc.Register(&node)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 	go accept(server)
-	args := AppendEntriesArgs{1}
-	time.Sleep(time.Second * 10)
-	for index, peer := range node.peers {
-		if index == node.ID {
-			continue
-		}
-		go caller(peer, args, carry)
-	}
-	for ret := range carry {
-		fmt.Println(ret)
-	}
+	select {}
+	// args := AppendEntriesArgs{1}
+	// time.Sleep(time.Second * 10)
+	// for index, peer := range node.peers {
+	// 	if index == node.ID {
+	// 		continue
+	// 	}
+	// 	go caller(peer, args, carry)
+	// }
+	// for ret := range carry {
+	// 	fmt.Println(ret)
+	// }
 }
