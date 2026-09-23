@@ -47,6 +47,37 @@ type Node struct {
 	lastHeard   time.Time
 	timeOut     time.Duration
 }
+type RequestVoteArgs struct {
+	ID   int
+	Term int
+}
+type RequestVoteReply struct {
+	Term    int
+	Granted bool
+}
+
+func (n *Node) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if args.Term < n.currentTerm {
+		reply.Granted = false
+		reply.Term = n.currentTerm
+		return nil
+	}
+	if args.Term > n.currentTerm {
+		n.votedFor = -1
+		n.role = Follower
+		n.currentTerm = args.Term
+	}
+	if n.votedFor == -1 || n.votedFor == args.ID {
+		reply.Granted = true
+		n.votedFor = args.ID
+		n.lastHeard = time.Now()
+	}
+	reply.Term = n.currentTerm
+	return nil
+
+}
 
 func (n *Node) increaseTermLocked() {
 	//Use function when the node is locked
