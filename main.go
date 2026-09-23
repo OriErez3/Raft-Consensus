@@ -182,12 +182,20 @@ func (n *Node) Sender(callAddy string, args AppendEntriesArgs) {
 	if err != nil {
 		return
 	}
+
 	defer client.Close()
 	var reply AppendEntriesReply
 	err = client.Call("Node.AppendEntries", args, &reply)
 	if err != nil {
 		return
 	}
+	n.mu.Lock()
+	if n.currentTerm < reply.Term {
+		n.currentTerm = reply.Term
+		n.role = Follower
+		n.votedFor = -1
+	}
+	n.mu.Unlock()
 	return
 }
 
