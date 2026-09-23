@@ -99,8 +99,39 @@ type AppendEntriesArgs struct {
 
 func (n *Node) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) error {
 	//The function to tell followers what to do, and get the response.
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if args.Term < n.currentTerm {
+		reply.Success = false
+		reply.Term = n.currentTerm
+		return nil
+	} else {
+		n.currentTerm = args.Term
+		reply.Term = n.currentTerm
+		n.role = Follower
+		n.lastHeard = time.Now()
+	}
 	log.Printf("node %d recieved AppendEntries from term %d", n.ID, args.Term)
 	return nil
+}
+func (n *Node) Heartbeat() {
+	for {
+		time.Sleep(time.Millisecond * 50)
+		n.mu.Lock()
+		tempRole := n.role
+		tempTerm := n.currentTerm
+		n.mu.Unlock()
+		if tempRole == Leader {
+			for i, v := range n.peers {
+				if i != n.ID {
+					var args AppendEntriesArgs
+					args.Term = tempTerm
+					go n.Sender(v, args)
+				}
+			}
+		}
+
+	}
 }
 
 func (n *Node) ElectionTimer() {
@@ -146,6 +177,20 @@ func accept(listener net.Listener) {
 		go rpc.ServeConn(con)
 	}
 }
+func (n *Node) Sender(callAddy string, args AppendEntriesArgs) {
+	client, err := rpc.Dial("tcp", callAddy)
+	if err != nil {
+		return
+	}
+	defer client.Close()
+	var reply AppendEntriesReply
+	err = client.Call("Node.AppendEntries", args, &reply)
+	if err != nil {
+		return
+	}
+	return
+}
+
 func (n *Node) ReqVoteCaller(callAddy string, args RequestVoteArgs) {
 	client, err := rpc.Dial("tcp", callAddy)
 	if err != nil {
@@ -179,28 +224,10 @@ func (n *Node) ReqVoteCaller(callAddy string, args RequestVoteArgs) {
 		n.VoteCounter += 1
 		if n.VoteCounter >= (len(n.peers)/2)+1 {
 			n.role = Leader
+			fmt.Println(n.ID, " is the leader")
 		}
 	}
 	return
-
-}
-
-// Tells other nodes what to do.
-func caller(callAddy string, args AppendEntriesArgs, carry chan string) {
-	client, err := rpc.Dial("tcp", callAddy)
-	if err != nil {
-		fmt.Println(err)
-		carry <- "Failure, dial issue"
-		return
-	}
-	var reply AppendEntriesReply
-	err = client.Call("Node.AppendEntries", args, &reply)
-	if err != nil {
-		carry <- "Failure, Call didn't work."
-		return
-	}
-	carry <- "Success"
-	defer client.Close()
 
 }
 
@@ -217,6 +244,7 @@ func main() {
 	randomDuration := minTimeOut + rand.N(maxTimeOut-minTimeOut)
 	node := Node{ID: *id, peers: list_of_peers, lastHeard: time.Now(), timeOut: randomDuration}
 	go node.ElectionTimer()
+	go node.Heartbeat()
 	//carry := make(chan string)
 	err = rpc.Register(&node)
 	if err != nil {
