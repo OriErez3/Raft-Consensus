@@ -46,6 +46,7 @@ type Node struct {
 	mu          sync.Mutex
 	lastHeard   time.Time
 	timeOut     time.Duration
+	VoteCounter int
 }
 type RequestVoteArgs struct {
 	ID   int
@@ -115,6 +116,7 @@ func (n *Node) ElectionTimer() {
 				n.increaseTermLocked()
 				n.votedFor = n.ID
 				n.role = Candidate
+				n.VoteCounter = 1
 				temp := n.currentTerm
 				n.lastHeard = time.Now()
 				n.timeOut = minTimeOut + rand.N(maxTimeOut-minTimeOut)
@@ -156,7 +158,31 @@ func (n *Node) ReqVoteCaller(callAddy string, args RequestVoteArgs) {
 		return
 
 	}
-	fmt.Println(reply)
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if reply.Term > n.currentTerm {
+		n.currentTerm = reply.Term
+		n.role = Follower
+		n.votedFor = -1
+
+		return
+	}
+	if n.role != Candidate {
+
+		return
+	}
+	if n.currentTerm != args.Term {
+
+		return
+	}
+	if reply.Granted {
+		n.VoteCounter += 1
+		if n.VoteCounter >= (len(n.peers)/2)+1 {
+			n.role = Leader
+		}
+	}
+	return
+
 }
 
 // Tells other nodes what to do.
