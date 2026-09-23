@@ -148,6 +148,10 @@ func (n *Node) ElectionTimer() {
 				n.votedFor = n.ID
 				n.role = Candidate
 				n.VoteCounter = 1
+				if n.VoteCounter >= (len(n.peers)/2)+1 {
+					n.role = Leader
+					fmt.Println(n.ID, " is the leader")
+				}
 				temp := n.currentTerm
 				n.lastHeard = time.Now()
 				n.timeOut = minTimeOut + rand.N(maxTimeOut-minTimeOut)
