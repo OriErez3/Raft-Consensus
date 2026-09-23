@@ -115,9 +115,16 @@ func (n *Node) ElectionTimer() {
 				n.increaseTermLocked()
 				n.votedFor = n.ID
 				n.role = Candidate
+				temp := n.currentTerm
 				n.lastHeard = time.Now()
 				n.timeOut = minTimeOut + rand.N(maxTimeOut-minTimeOut)
 				fmt.Println(n.votedFor, n.role, n.currentTerm, n.timeOut)
+				args := RequestVoteArgs{ID: n.ID, Term: temp}
+				for i, v := range n.peers {
+					if i != n.ID {
+						go n.ReqVoteCaller(v, args)
+					}
+				}
 			}
 
 			n.mu.Unlock()
@@ -136,6 +143,20 @@ func accept(listener net.Listener) {
 		}
 		go rpc.ServeConn(con)
 	}
+}
+func (n *Node) ReqVoteCaller(callAddy string, args RequestVoteArgs) {
+	client, err := rpc.Dial("tcp", callAddy)
+	if err != nil {
+		return
+	}
+	defer client.Close()
+	var reply RequestVoteReply
+	err = client.Call("Node.RequestVote", args, &reply)
+	if err != nil {
+		return
+
+	}
+	fmt.Println(reply)
 }
 
 // Tells other nodes what to do.
