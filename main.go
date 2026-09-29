@@ -72,13 +72,16 @@ func (n *Node) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) error 
 		n.votedFor = -1
 		n.role = Follower
 		n.currentTerm = args.Term
+		n.save()
 	}
 	if n.votedFor == -1 || n.votedFor == args.ID {
 		reply.Granted = true
 		n.votedFor = args.ID
 		n.lastHeard = time.Now()
+		n.save()
 	}
 	reply.Term = n.currentTerm
+
 	return nil
 
 }
@@ -87,6 +90,7 @@ func (n *Node) increaseTermLocked() {
 	//Use function when the node is locked
 	n.currentTerm += 1
 	n.votedFor = -1
+	n.save()
 }
 
 type AppendEntriesReply struct {
@@ -109,12 +113,16 @@ func (n *Node) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) 
 		reply.Term = n.currentTerm
 		return nil
 	} else {
-		n.currentTerm = args.Term
+		if args.Term > n.currentTerm {
+			n.currentTerm = args.Term
+			n.save()
+		}
 		reply.Term = n.currentTerm
 		n.role = Follower
 		n.lastHeard = time.Now()
 	}
 	log.Printf("node %d recieved AppendEntries from term %d", n.ID, args.Term)
+
 	return nil
 }
 
@@ -199,6 +207,7 @@ func (n *Node) ElectionTimer() {
 						go n.ReqVoteCaller(v, args)
 					}
 				}
+				n.save()
 			}
 
 			n.mu.Unlock()
@@ -235,7 +244,9 @@ func (n *Node) Sender(callAddy string, args AppendEntriesArgs) {
 		n.currentTerm = reply.Term
 		n.role = Follower
 		n.votedFor = -1
+		n.save()
 	}
+
 	n.mu.Unlock()
 	return
 }
@@ -258,7 +269,7 @@ func (n *Node) ReqVoteCaller(callAddy string, args RequestVoteArgs) {
 		n.currentTerm = reply.Term
 		n.role = Follower
 		n.votedFor = -1
-
+		n.save()
 		return
 	}
 	if n.role != Candidate {
@@ -276,6 +287,7 @@ func (n *Node) ReqVoteCaller(callAddy string, args RequestVoteArgs) {
 			fmt.Println(n.ID, " is the leader")
 		}
 	}
+
 	return
 
 }
@@ -291,7 +303,8 @@ func main() {
 	}
 	list_of_peers := strings.Split(*peers, ",")
 	randomDuration := minTimeOut + rand.N(maxTimeOut-minTimeOut)
-	node := Node{ID: *id, peers: list_of_peers, lastHeard: time.Now(), timeOut: randomDuration}
+	node := Node{ID: *id, peers: list_of_peers, lastHeard: time.Now(), timeOut: randomDuration, votedFor: -1}
+	node.load()
 	go node.ElectionTimer()
 	go node.Heartbeat()
 	//carry := make(chan string)
