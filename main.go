@@ -1,12 +1,15 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"math/rand/v2"
 	"net"
 	"net/rpc"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -114,6 +117,40 @@ func (n *Node) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) 
 	log.Printf("node %d recieved AppendEntries from term %d", n.ID, args.Term)
 	return nil
 }
+
+type writeJson struct {
+	Term     int
+	VotedFor int
+}
+
+func (n *Node) save() {
+	path := fmt.Sprintf("raft-%d.json", n.ID)
+	data := writeJson{Term: n.currentTerm, VotedFor: n.votedFor}
+	by, err := json.Marshal(data)
+	if err != nil {
+		fmt.Println(err)
+	}
+	err = os.WriteFile(path, by, 0644)
+	if err != nil {
+		fmt.Println(err)
+	}
+}
+func (n *Node) load() {
+	path := fmt.Sprintf("raft-%d.json", n.ID)
+	by, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		fmt.Println(err)
+	}
+	var data writeJson
+	json.Unmarshal(by, &data)
+	n.currentTerm = data.Term
+	n.votedFor = data.VotedFor
+	return
+}
+
 func (n *Node) Heartbeat() {
 	for {
 		time.Sleep(time.Millisecond * 50)
