@@ -50,6 +50,7 @@ type Node struct {
 	lastHeard   time.Time
 	timeOut     time.Duration
 	VoteCounter int
+	log         []LogEntry
 }
 type RequestVoteArgs struct {
 	ID   int
@@ -216,6 +217,11 @@ func (n *Node) ElectionTimer() {
 	}
 }
 
+type LogEntry struct {
+	Term    int
+	Command string
+}
+
 // Accepts a connection.
 func accept(listener net.Listener) {
 	for {
@@ -291,6 +297,19 @@ func (n *Node) ReqVoteCaller(callAddy string, args RequestVoteArgs) {
 	return
 
 }
+func (n *Node) commandSender() {
+	count := 0
+	for {
+		time.Sleep(3 * time.Second)
+		n.mu.Lock()
+		if n.role == Leader {
+			n.log = append(n.log, LogEntry{Term: n.currentTerm, Command: fmt.Sprintf("command-%d", count)})
+			count += 1
+			fmt.Println(n.ID, n.log)
+		}
+		n.mu.Unlock()
+	}
+}
 
 func main() {
 	id := flag.Int("id", 0, "this node's ID")
@@ -303,8 +322,9 @@ func main() {
 	}
 	list_of_peers := strings.Split(*peers, ",")
 	randomDuration := minTimeOut + rand.N(maxTimeOut-minTimeOut)
-	node := Node{ID: *id, peers: list_of_peers, lastHeard: time.Now(), timeOut: randomDuration, votedFor: -1}
+	node := Node{ID: *id, peers: list_of_peers, lastHeard: time.Now(), timeOut: randomDuration, votedFor: -1, log: []LogEntry{{}}}
 	node.load()
+	go node.commandSender()
 	go node.ElectionTimer()
 	go node.Heartbeat()
 	//carry := make(chan string)
