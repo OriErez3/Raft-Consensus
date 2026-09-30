@@ -51,6 +51,7 @@ type Node struct {
 	timeOut     time.Duration
 	VoteCounter int
 	log         []LogEntry
+	nextIndex   []int
 }
 type RequestVoteArgs struct {
 	ID   int
@@ -102,7 +103,11 @@ type AppendEntriesReply struct {
 
 type AppendEntriesArgs struct {
 	//Command the leader sends out and the follower needs to respond to
-	Term int
+	Term         int
+	PrevLogIndex int
+	PrevLogTerm  int
+	Entries      []LogEntry
+	LeaderCommit int
 }
 
 func (n *Node) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) error {
@@ -118,10 +123,25 @@ func (n *Node) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) 
 			n.currentTerm = args.Term
 			n.save()
 		}
-		reply.Term = n.currentTerm
-		n.role = Follower
-		n.lastHeard = time.Now()
 	}
+	n.role = Follower
+	n.lastHeard = time.Now()
+	if args.PrevLogIndex >= len(n.log) {
+		reply.Success = false
+		reply.Term = n.currentTerm
+		return nil
+
+	}
+	if n.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+		reply.Success = false
+		reply.Term = n.currentTerm
+		return nil
+	}
+	n.log = n.log[:args.PrevLogIndex+1]
+	n.log = append(n.log, args.Entries...)
+	reply.Success = true
+	reply.Term = n.currentTerm
+
 	log.Printf("node %d recieved AppendEntries from term %d", n.ID, args.Term)
 
 	return nil
@@ -166,17 +186,20 @@ func (n *Node) Heartbeat() {
 		n.mu.Lock()
 		tempRole := n.role
 		tempTerm := n.currentTerm
-		n.mu.Unlock()
+
 		if tempRole == Leader {
 			for i, v := range n.peers {
 				if i != n.ID {
 					var args AppendEntriesArgs
 					args.Term = tempTerm
+					args.PrevLogIndex = n.nextIndex[i] - 1
+					args.PrevLogTerm = n.log[n.nextIndex[i]-1].Term
+					args.Entries = n.log[n.nextIndex[i]:]
 					go n.Sender(v, args)
 				}
 			}
 		}
-
+		n.mu.Unlock()
 	}
 }
 
@@ -196,6 +219,10 @@ func (n *Node) ElectionTimer() {
 				n.VoteCounter = 1
 				if n.VoteCounter >= (len(n.peers)/2)+1 {
 					n.role = Leader
+					n.nextIndex = make([]int, len(n.peers))
+					for i := range n.nextIndex {
+						n.nextIndex[i] = len(n.log)
+					}
 					fmt.Println(n.ID, " is the leader")
 				}
 				temp := n.currentTerm
@@ -290,6 +317,10 @@ func (n *Node) ReqVoteCaller(callAddy string, args RequestVoteArgs) {
 		n.VoteCounter += 1
 		if n.VoteCounter >= (len(n.peers)/2)+1 {
 			n.role = Leader
+			n.nextIndex = make([]int, len(n.peers))
+			for i := range n.nextIndex {
+				n.nextIndex[i] = len(n.log)
+			}
 			fmt.Println(n.ID, " is the leader")
 		}
 	}
