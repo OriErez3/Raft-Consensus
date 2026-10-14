@@ -290,6 +290,8 @@ func (n *Node) Sender(callAddy string, peerIndex int, args AppendEntriesArgs) {
 	}
 	if reply.Success && args.PrevLogIndex+len(args.Entries)+1 > n.nextIndex[peerIndex] {
 		n.nextIndex[peerIndex] = args.PrevLogIndex + len(args.Entries) + 1
+	} else if !reply.Success && n.nextIndex[peerIndex] > 1 {
+		n.nextIndex[peerIndex] -= 1
 	}
 
 	return
