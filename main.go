@@ -145,7 +145,7 @@ func (n *Node) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) 
 	n.log = append(n.log, args.Entries...)
 	reply.Success = true
 	reply.Term = n.currentTerm
-
+	n.commitIndex = min(args.LeaderCommit, len(n.log)-1)
 	log.Printf("node %d recieved AppendEntries from term %d", n.ID, args.Term)
 	log.Print(n.log)
 
@@ -184,6 +184,17 @@ func (n *Node) load() {
 	n.votedFor = data.VotedFor
 	return
 }
+func (n *Node) Applied() {
+	for {
+		time.Sleep(time.Millisecond * 10)
+		n.mu.Lock()
+		for n.commitIndex > n.lastApplied {
+			n.lastApplied += 1
+			fmt.Println("Applied: ", n.ID, n.log[n.lastApplied])
+		}
+		n.mu.Unlock()
+	}
+}
 
 func (n *Node) Heartbeat() {
 	for {
@@ -200,6 +211,7 @@ func (n *Node) Heartbeat() {
 					args.PrevLogIndex = n.nextIndex[i] - 1
 					args.PrevLogTerm = n.log[n.nextIndex[i]-1].Term
 					args.Entries = n.log[n.nextIndex[i]:]
+					args.LeaderCommit = n.commitIndex
 					go n.Sender(v, i, args)
 				}
 			}
@@ -257,7 +269,10 @@ type LogEntry struct {
 
 func majorityElement(commits []int) int {
 	slices.Sort(commits)
-	return commits[len(commits)/2]
+	if len(commits)%2 == 1 {
+		return commits[len(commits)/2]
+	}
+	return commits[(len(commits)/2)+1]
 }
 
 // Accepts a connection.
@@ -384,6 +399,7 @@ func main() {
 	go node.commandSender()
 	go node.ElectionTimer()
 	go node.Heartbeat()
+	go node.Applied()
 	//carry := make(chan string)
 	err = rpc.Register(&node)
 	if err != nil {
