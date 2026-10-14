@@ -143,6 +143,7 @@ func (n *Node) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) 
 	reply.Term = n.currentTerm
 
 	log.Printf("node %d recieved AppendEntries from term %d", n.ID, args.Term)
+	log.Print(n.log)
 
 	return nil
 }
@@ -195,7 +196,7 @@ func (n *Node) Heartbeat() {
 					args.PrevLogIndex = n.nextIndex[i] - 1
 					args.PrevLogTerm = n.log[n.nextIndex[i]-1].Term
 					args.Entries = n.log[n.nextIndex[i]:]
-					go n.Sender(v, args)
+					go n.Sender(v, i, args)
 				}
 			}
 		}
@@ -260,7 +261,7 @@ func accept(listener net.Listener) {
 		go rpc.ServeConn(con)
 	}
 }
-func (n *Node) Sender(callAddy string, args AppendEntriesArgs) {
+func (n *Node) Sender(callAddy string, peerIndex int, args AppendEntriesArgs) {
 	client, err := rpc.Dial("tcp", callAddy)
 	if err != nil {
 		return
@@ -273,14 +274,24 @@ func (n *Node) Sender(callAddy string, args AppendEntriesArgs) {
 		return
 	}
 	n.mu.Lock()
+	defer n.mu.Unlock()
 	if n.currentTerm < reply.Term {
 		n.currentTerm = reply.Term
 		n.role = Follower
 		n.votedFor = -1
 		n.save()
+		return
+	}
+	if n.role != Leader {
+		return
+	}
+	if n.currentTerm != args.Term {
+		return
+	}
+	if reply.Success && args.PrevLogIndex+len(args.Entries)+1 > n.nextIndex[peerIndex] {
+		n.nextIndex[peerIndex] = args.PrevLogIndex + len(args.Entries) + 1
 	}
 
-	n.mu.Unlock()
 	return
 }
 
