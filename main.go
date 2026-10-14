@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/rpc"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +53,9 @@ type Node struct {
 	VoteCounter int
 	log         []LogEntry
 	nextIndex   []int
+	matchIndex  []int
+	commitIndex int
+	lastApplied int
 }
 type RequestVoteArgs struct {
 	ID   int
@@ -220,7 +224,8 @@ func (n *Node) ElectionTimer() {
 				n.VoteCounter = 1
 				if n.VoteCounter >= (len(n.peers)/2)+1 {
 					n.role = Leader
-					n.nextIndex = make([]int, len(n.peers))
+					n.matchIndex = make([]int, len(n.peers)) //Confirmed index that peer is on
+					n.nextIndex = make([]int, len(n.peers))  //Guess index the peer is on
 					for i := range n.nextIndex {
 						n.nextIndex[i] = len(n.log)
 					}
@@ -248,6 +253,11 @@ func (n *Node) ElectionTimer() {
 type LogEntry struct {
 	Term    int
 	Command string
+}
+
+func majorityElement(commits []int) int {
+	slices.Sort(commits)
+	return commits[len(commits)/2]
 }
 
 // Accepts a connection.
@@ -290,10 +300,12 @@ func (n *Node) Sender(callAddy string, peerIndex int, args AppendEntriesArgs) {
 	}
 	if reply.Success && args.PrevLogIndex+len(args.Entries)+1 > n.nextIndex[peerIndex] {
 		n.nextIndex[peerIndex] = args.PrevLogIndex + len(args.Entries) + 1
+		n.matchIndex[n.ID] = len(n.log) - 1
+		n.matchIndex[peerIndex] = args.PrevLogIndex + len(args.Entries)
+		n.commitIndex = majorityElement(slices.Clone(n.matchIndex))
 	} else if !reply.Success && n.nextIndex[peerIndex] > 1 {
 		n.nextIndex[peerIndex] -= 1
 	}
-
 	return
 }
 
@@ -331,6 +343,7 @@ func (n *Node) ReqVoteCaller(callAddy string, args RequestVoteArgs) {
 		if n.VoteCounter >= (len(n.peers)/2)+1 {
 			n.role = Leader
 			n.nextIndex = make([]int, len(n.peers))
+			n.matchIndex = make([]int, len(n.peers))
 			for i := range n.nextIndex {
 				n.nextIndex[i] = len(n.log)
 			}
