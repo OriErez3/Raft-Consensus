@@ -58,8 +58,10 @@ type Node struct {
 	lastApplied int
 }
 type RequestVoteArgs struct {
-	ID   int
-	Term int
+	ID           int
+	Term         int
+	LastLogIndex int
+	LastLogTerm  int
 }
 type RequestVoteReply struct {
 	Term    int
@@ -80,7 +82,7 @@ func (n *Node) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) error 
 		n.currentTerm = args.Term
 		n.save()
 	}
-	if n.votedFor == -1 || n.votedFor == args.ID {
+	if (n.votedFor == -1 || n.votedFor == args.ID) && ((args.LastLogTerm > n.log[len(n.log)-1].Term) || (args.LastLogTerm == n.log[len(n.log)-1].Term && args.LastLogIndex >= len(n.log)-1)) {
 		reply.Granted = true
 		n.votedFor = args.ID
 		n.lastHeard = time.Now()
@@ -146,6 +148,7 @@ func (n *Node) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) 
 	reply.Success = true
 	reply.Term = n.currentTerm
 	n.commitIndex = min(args.LeaderCommit, len(n.log)-1)
+	n.save()
 	log.Printf("node %d recieved AppendEntries from term %d", n.ID, args.Term)
 	log.Print(n.log)
 
@@ -155,11 +158,12 @@ func (n *Node) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) 
 type writeJson struct {
 	Term     int
 	VotedFor int
+	Log      []LogEntry
 }
 
 func (n *Node) save() {
 	path := fmt.Sprintf("raft-%d.json", n.ID)
-	data := writeJson{Term: n.currentTerm, VotedFor: n.votedFor}
+	data := writeJson{Term: n.currentTerm, VotedFor: n.votedFor, Log: n.log}
 	by, err := json.Marshal(data)
 	if err != nil {
 		fmt.Println(err)
@@ -182,6 +186,9 @@ func (n *Node) load() {
 	json.Unmarshal(by, &data)
 	n.currentTerm = data.Term
 	n.votedFor = data.VotedFor
+	if data.Log != nil {
+		n.log = data.Log
+	}
 	return
 }
 func (n *Node) Applied() {
@@ -247,7 +254,7 @@ func (n *Node) ElectionTimer() {
 				n.lastHeard = time.Now()
 				n.timeOut = minTimeOut + rand.N(maxTimeOut-minTimeOut)
 				fmt.Println(n.votedFor, n.role, n.currentTerm, n.timeOut)
-				args := RequestVoteArgs{ID: n.ID, Term: temp}
+				args := RequestVoteArgs{ID: n.ID, Term: temp, LastLogIndex: len(n.log) - 1, LastLogTerm: n.log[len(n.log)-1].Term}
 				for i, v := range n.peers {
 					if i != n.ID {
 						go n.ReqVoteCaller(v, args)
@@ -269,10 +276,7 @@ type LogEntry struct {
 
 func majorityElement(commits []int) int {
 	slices.Sort(commits)
-	if len(commits)%2 == 1 {
-		return commits[len(commits)/2]
-	}
-	return commits[(len(commits)/2)+1]
+	return commits[len(commits)-len(commits)/2-1]
 }
 
 // Accepts a connection.
@@ -317,7 +321,10 @@ func (n *Node) Sender(callAddy string, peerIndex int, args AppendEntriesArgs) {
 		n.nextIndex[peerIndex] = args.PrevLogIndex + len(args.Entries) + 1
 		n.matchIndex[n.ID] = len(n.log) - 1
 		n.matchIndex[peerIndex] = args.PrevLogIndex + len(args.Entries)
-		n.commitIndex = majorityElement(slices.Clone(n.matchIndex))
+		candidate := majorityElement(slices.Clone(n.matchIndex))
+		if n.log[candidate].Term == n.currentTerm {
+			n.commitIndex = candidate
+		}
 	} else if !reply.Success && n.nextIndex[peerIndex] > 1 {
 		n.nextIndex[peerIndex] -= 1
 	}
@@ -378,6 +385,7 @@ func (n *Node) commandSender() {
 			n.log = append(n.log, LogEntry{Term: n.currentTerm, Command: fmt.Sprintf("command-%d", count)})
 			count += 1
 			fmt.Println(n.ID, n.log)
+			n.save()
 		}
 		n.mu.Unlock()
 	}
